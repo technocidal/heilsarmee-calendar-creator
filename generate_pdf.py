@@ -22,7 +22,7 @@ from pypdf import PdfReader, PdfWriter
 
 BASE_URL  = "https://www.heilsarmee.de"
 LIST_PATH = "/leipzig/termineveranstaltungen.html"
-OUT_FILE  = os.environ.get("OUT_FILE", "termine-heilsarmee-leipzig.pdf")
+OUT_FILE  = os.environ.get("OUT_FILE", "output")
 
 # ── Scraping ──────────────────────────────────────────────────────────────────
 
@@ -236,16 +236,14 @@ def main():
         browser = pw.chromium.launch()
         page = browser.new_page(viewport={"width": A4_W_PX, "height": A4_H_PX})
 
-        os.makedirs(os.path.dirname(OUT_FILE) or ".", exist_ok=True)
+        os.makedirs(OUT_FILE, exist_ok=True)
 
         # Save individual month PDFs
         for month in months:
             print(f"  {month}…")
             filename = f"{month} Kalender.pdf"
-            with open(
-                os.path.join(os.path.dirname(OUT_FILE) or ".", filename), "wb"
-            ) as f:
+            with open(os.path.join(OUT_FILE, filename), "wb") as f:
                 f.write(render_month(page, events_json, month))
             print(f"  ✓ {filename}")
         browser.close()
-    print(f"✓ Saved → {len(months)} PDFs in {os.path.dirname(OUT_FILE) or '.'}")
+    print(f"✓ Saved → {len(months)} PDFs in {OUT_FILE}")

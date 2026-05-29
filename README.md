@@ -8,14 +8,14 @@ Scrapes the public event list from [heilsarmee.de/leipzig](https://www.heilsarme
 make run
 ```
 
-Builds the Docker image, generates the PDFs and opens them. Output: `output/` directory with files like `May - Kalender.pdf`, `June - Kalender.pdf`, etc.
+Builds the Docker image, generates the PDFs and opens them. Output: `output/` directory with files like `2026-05 Kalender.pdf`, `2026-06 Kalender.pdf`, etc.
 
 ## How it works
 
 1. **Scrape** — `requests` + `BeautifulSoup` fetch all paginated upcoming events from the public list view (no login required)
 2. **Render** — each month is rendered as a FullCalendar `dayGridMonth` page inside a headless Chromium (Playwright), styled to match the site's colours (`#c8102e` red, `#00486a` teal)
 3. **Shrink-to-fit** — if a dense month overflows A4 height, a second render pass widens the viewport so the scaled-down content still fills the full page width
-4. **Save** — individual month PDFs are saved with names like `May - Kalender.pdf`
+4. **Save** — individual month PDFs are saved with names like `2026-05 Kalender.pdf`
 
 ## Requirements
 
