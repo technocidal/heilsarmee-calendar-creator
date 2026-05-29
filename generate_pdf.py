@@ -13,6 +13,7 @@ import json
 import math
 import os
 import re
+from datetime import datetime
 
 import requests
 from bs4 import BeautifulSoup
@@ -230,27 +231,22 @@ def main():
 
     fc_events   = [{"title": e["title"], "start": e["start"]} for e in events]
     events_json = json.dumps(fc_events, ensure_ascii=False)
-
     print("→ Rendering PDF…")
-    writer = PdfWriter()
-
     with sync_playwright() as pw:
         browser = pw.chromium.launch()
-        page    = browser.new_page(viewport={"width": A4_W_PX, "height": A4_H_PX})
+        page = browser.new_page(viewport={"width": A4_W_PX, "height": A4_H_PX})
 
+        os.makedirs(os.path.dirname(OUT_FILE) or ".", exist_ok=True)
+
+        # Save individual month PDFs
         for month in months:
             print(f"  {month}…")
-            pdf_bytes = render_month(page, events_json, month)
-            for p in PdfReader(io.BytesIO(pdf_bytes)).pages:
-                writer.add_page(p)
-
+            month_name = datetime.strptime(month, "%Y-%m").strftime("%B")
+            filename = f"{month_name} - Kalender.pdf"
+            with open(
+                os.path.join(os.path.dirname(OUT_FILE) or ".", filename), "wb"
+            ) as f:
+                f.write(render_month(page, events_json, month))
+            print(f"  ✓ {filename}")
         browser.close()
-
-    os.makedirs(os.path.dirname(OUT_FILE) or ".", exist_ok=True)
-    with open(OUT_FILE, "wb") as f:
-        writer.write(f)
-
-    print(f"✓ Saved → {OUT_FILE}")
-
-if __name__ == "__main__":
-    main()
+    print(f"✓ Saved → {len(months)} PDFs in {os.path.dirname(OUT_FILE) or '.'}")
