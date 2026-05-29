@@ -242,7 +242,7 @@ def main():
         for month in months:
             print(f"  {month}…")
             month_name = datetime.strptime(month, "%Y-%m").strftime("%B")
-            filename = f"{month_name} - Kalender.pdf"
+            filename = f"{month} {month_name} - Kalender.pdf"
             with open(
                 os.path.join(os.path.dirname(OUT_FILE) or ".", filename), "wb"
             ) as f:
