@@ -94,13 +94,14 @@ CALENDAR_TEMPLATE = """\
     html, body { width: 100%; height: 100%; background: #fff; }
     #cal { padding: 3mm 8mm 3mm; height: 100vh; }
 
-    .fc-toolbar-title           { color: #c8102e; font-size: 13pt; }
+    .fc-toolbar-title           { color: #c8102e; font-size: 15pt; }
     .fc-toolbar.fc-header-toolbar { margin-bottom: 2px !important; }
     .fc-daygrid-event           { background: #00486a; border-color: #00486a;
                                   white-space: normal !important; }
-    .fc-event-title             { font-size: 7pt; white-space: normal !important; }
+    .fc-event-title             { font-size: 8pt; white-space: normal !important; }
     .fc-day-today               { background: transparent !important; }
-    .fc-col-header-cell-cushion { font-weight: bold; font-size: 8.5pt; }
+    .fc-col-header-cell-cushion { font-weight: bold; font-size: 10pt; }
+    .fc-daygrid-day-number      { font-size: 9pt; }
     .ev-time                    { font-weight: bold; }
     .ev-content                 { display: block; }
     .fc-daygrid-day-events      { overflow: hidden; }
@@ -172,15 +173,15 @@ def calendar_html(events_json: str, initial_date: str) -> str:
 
 # ── PDF rendering ─────────────────────────────────────────────────────────────
 
-# A4 landscape at 96 dpi
-A4_W_PX = 1123
-A4_H_PX = 794
+# A3 landscape at 96 dpi
+A3_W_PX = 1587
+A3_H_PX = 1123
 
 def render_month(pw_page, events_json: str, month: str) -> bytes:
     html = calendar_html(events_json, f"{month}-01")
 
     # Pass 1: render at standard A4 width
-    pw_page.set_viewport_size({"width": A4_W_PX, "height": A4_H_PX})
+    pw_page.set_viewport_size({"width": A3_W_PX, "height": A3_H_PX})
     pw_page.set_content(html, wait_until="networkidle")
     pw_page.wait_for_timeout(500)
     rendered_h = pw_page.evaluate("""
@@ -201,24 +202,24 @@ def render_month(pw_page, events_json: str, month: str) -> bytes:
         })()
     """)
 
-    if rendered_h <= A4_H_PX:
+    if rendered_h <= A3_H_PX:
         # Fits without scaling — export directly
         return pw_page.pdf(
-            format="A4", landscape=True, print_background=True,
+            format="A3", landscape=True, print_background=True,
             margin={"top": "0", "bottom": "0", "left": "0", "right": "0"},
         )
 
     # Pass 2: widen the viewport by 1/scale so scaled content fills full A4 width
-    scale   = A4_H_PX / rendered_h
-    wider_w = math.ceil(A4_W_PX / scale)
-    # final_scale = A4_W_PX / wider_w ensures width fits exactly;
+    scale   = A3_H_PX / rendered_h
+    wider_w = math.ceil(A3_W_PX / scale)
+    # final_scale = A3_W_PX / wider_w ensures width fits exactly;
     # height also fits because wider columns reduce wrapping (rendered_h2 ≤ rendered_h)
-    final_scale = A4_W_PX / wider_w
-    pw_page.set_viewport_size({"width": wider_w, "height": A4_H_PX})
+    final_scale = A3_W_PX / wider_w
+    pw_page.set_viewport_size({"width": wider_w, "height": A3_H_PX})
     pw_page.set_content(html, wait_until="networkidle")
     pw_page.wait_for_timeout(500)
     return pw_page.pdf(
-        format="A4", landscape=True, print_background=True, scale=final_scale,
+        format="A3", landscape=True, print_background=True, scale=final_scale,
         margin={"top": "0", "bottom": "0", "left": "0", "right": "0"},
     )
 
@@ -234,7 +235,7 @@ def main():
     print("→ Rendering PDF…")
     with sync_playwright() as pw:
         browser = pw.chromium.launch()
-        page = browser.new_page(viewport={"width": A4_W_PX, "height": A4_H_PX})
+        page = browser.new_page(viewport={"width": A3_W_PX, "height": A3_H_PX})
 
         os.makedirs(OUT_FILE, exist_ok=True)
 
