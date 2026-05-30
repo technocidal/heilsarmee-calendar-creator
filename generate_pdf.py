@@ -245,5 +245,5 @@ def main():
             with open(os.path.join(OUT_FILE, filename), "wb") as f:
                 f.write(render_month(page, events_json, month))
             print(f"  ✓ {filename}")
-        browser.close()
-    print(f"✓ Saved → {len(months)} PDFs in {OUT_FILE}")
+if __name__ == "__main__":
+    main()
