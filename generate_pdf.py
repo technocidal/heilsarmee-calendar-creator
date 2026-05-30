@@ -1,32 +1,123 @@
 #!/usr/bin/env python3
 """
-Scrapes all upcoming events from the public Heilsarmee Leipzig calendar
-and renders a print-ready A3 landscape PDF per month using FullCalendar.
+Scrapes events from the public Heilsarmee Leipzig calendar and renders
+a print-ready PDF per month using FullCalendar.
 
-Run:  python3 generate_pdf.py
-Out:  output/<YYYY-MM> Kalender.pdf
+Run:  python3 generate_pdf.py [OPTIONS]
+Out:  <out-dir>/<YYYY-MM> Kalender.pdf
 """
 
+import argparse
 import json
 import math
 import os
 import re
+from datetime import datetime
 
 import requests
 from bs4 import BeautifulSoup
 from playwright.sync_api import sync_playwright
 
-BASE_URL = "https://www.heilsarmee.de"
-LIST_PATH = "/leipzig/termineveranstaltungen.html"
-OUT_DIR = os.environ.get("OUT_DIR", "output")
+# ── Constants ─────────────────────────────────────────────────────────────────
+
+BASE_URL         = "https://www.heilsarmee.de"
+DEFAULT_LIST_PATH = "/leipzig/termineveranstaltungen.html"
+FULLCALENDAR_CDN  = "https://cdn.jsdelivr.net/npm/fullcalendar@6.1.20/index.global.min.js"
+
+PAPER_SIZES = {
+    "A3": dict(w=1587, h=1123, font_title=15, font_header=10, font_day=9,  font_event=8),
+    "A4": dict(w=1123, h=794,  font_title=13, font_header=8.5, font_day=7, font_event=7),
+}
+
+GERMAN_MONTHS = [
+    "Januar", "Februar", "März", "April", "Mai", "Juni",
+    "Juli", "August", "September", "Oktober", "November", "Dezember",
+]
+
+# ── CLI ───────────────────────────────────────────────────────────────────────
+
+def parse_args() -> argparse.Namespace:
+    current_month = datetime.today().strftime("%Y-%m")
+    p = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+
+    p.add_argument("--paper",       choices=PAPER_SIZES, default="A3",
+                   help="Paper size (default: A3)")
+    p.add_argument("--font-title",  type=float, metavar="PT",
+                   help="Title font size in pt (overrides paper default)")
+    p.add_argument("--font-header", type=float, metavar="PT",
+                   help="Column header font size in pt (overrides paper default)")
+    p.add_argument("--font-day",    type=float, metavar="PT",
+                   help="Day number font size in pt (overrides paper default)")
+    p.add_argument("--font-event",  type=float, metavar="PT",
+                   help="Event text font size in pt (overrides paper default)")
+
+    p.add_argument("--list-path",   default=DEFAULT_LIST_PATH, metavar="PATH",
+                   help=f"URL path to the event list (default: {DEFAULT_LIST_PATH})")
+    p.add_argument("--out-dir",     default=os.environ.get("OUT_DIR", "output"), metavar="DIR",
+                   help="Output directory (default: output)")
+
+    p.add_argument("--start",       default=current_month, metavar="YYYY-MM",
+                   help="First month to generate (default: current month)")
+    p.add_argument("--end",         metavar="YYYY-MM",
+                   help="Last month to generate (default: same as --start)")
+
+    p.add_argument("--no-time",     action="store_true",
+                   help="Don't show event times")
+    p.add_argument("--no-title",    action="store_true",
+                   help="Don't show the month title")
+    p.add_argument("--title",       metavar="TEXT",
+                   help="Title text (default: German month name + year, e.g. 'August 2026')")
+
+    return p.parse_args()
+
+
+def build_config(args: argparse.Namespace) -> dict:
+    paper = PAPER_SIZES[args.paper]
+    return {
+        "paper_name":  args.paper,
+        "paper":       paper,
+        "fonts": {
+            "title":  args.font_title  or paper["font_title"],
+            "header": args.font_header or paper["font_header"],
+            "day":    args.font_day    or paper["font_day"],
+            "event":  args.font_event  or paper["font_event"],
+        },
+        "list_path":   args.list_path,
+        "out_dir":     args.out_dir,
+        "start":       args.start,
+        "end":         args.end or args.start,
+        "show_time":   not args.no_time,
+        "show_title":  not args.no_title,
+        "title":   args.title,
+    }
+
+
+# ── Helpers ───────────────────────────────────────────────────────────────────
+
+def months_in_range(start: str, end: str) -> list[str]:
+    cur = datetime.strptime(start, "%Y-%m")
+    end_dt = datetime.strptime(end, "%Y-%m")
+    months = []
+    while cur <= end_dt:
+        months.append(cur.strftime("%Y-%m"))
+        cur = cur.replace(month=cur.month + 1) if cur.month < 12 else cur.replace(year=cur.year + 1, month=1)
+    return months
+
+
+def format_title(month: str, title: str | None) -> str:
+    if title is not None:
+        return title
+    dt = datetime.strptime(month, "%Y-%m")
+    return f"{GERMAN_MONTHS[dt.month - 1]} {dt.year}"
+
 
 # ── Scraping ──────────────────────────────────────────────────────────────────
 
-def fetch_page(page_num: int) -> BeautifulSoup:
+def fetch_page(list_path: str, page_num: int) -> BeautifulSoup:
     params = {"view": "list"}
     if page_num > 1:
         params["page_e"] = page_num
-    r = requests.get(BASE_URL + LIST_PATH, params=params, timeout=15)
+    r = requests.get(BASE_URL + list_path, params=params, timeout=15)
     r.raise_for_status()
     return BeautifulSoup(r.text, "html.parser")
 
@@ -40,47 +131,37 @@ def total_pages(soup: BeautifulSoup) -> int:
     return max(nums) if nums else 1
 
 
-def parse_events(soup: BeautifulSoup) -> list[dict]:
+def parse_events(soup: BeautifulSoup, show_time: bool) -> list[dict]:
     events = []
     for row in soup.select(".listing-row--event"):
         time_el = row.select_one("time")
         if not time_el:
             continue
-        dt = time_el.get("datetime", "")
-        time_text = time_el.get_text(strip=True)
+        dt    = time_el.get("datetime", "")
         title = (row.select_one(".listing-row__headline") or row).get_text(strip=True)
-        m = re.search(r"(\d{2}:\d{2})", time_text)
-        time_part = m.group(1) if m else ""
-        events.append({
-            "start": dt,
-            "title": f"{time_part} {title}" if time_part else title,
-            "month": dt[:7],
-        })
+        if show_time:
+            m = re.search(r"(\d{2}:\d{2})", time_el.get_text(strip=True))
+            if m:
+                title = f"{m.group(1)} {title}"
+        events.append({"start": dt, "title": title, "month": dt[:7]})
     return events
 
 
-def scrape_all_events() -> list[dict]:
+def scrape_events(cfg: dict) -> list[dict]:
     print("→ Scraping events…")
-    first = fetch_page(1)
+    first = fetch_page(cfg["list_path"], 1)
     pages = total_pages(first)
-    all_events = parse_events(first)
+    all_events = parse_events(first, cfg["show_time"])
     for p in range(2, pages + 1):
-        all_events.extend(parse_events(fetch_page(p)))
+        all_events.extend(parse_events(fetch_page(cfg["list_path"], p), cfg["show_time"]))
         print(f"\r  {len(all_events)} events ({p}/{pages} pages)", end="", flush=True)
     print()
     return all_events
 
 
-def active_months(events: list[dict]) -> list[str]:
-    return sorted({e["month"] for e in events})
+# ── HTML template ─────────────────────────────────────────────────────────────
 
-
-# ── FullCalendar HTML template ────────────────────────────────────────────────
-
-FULLCALENDAR_CDN = "https://cdn.jsdelivr.net/npm/fullcalendar@6.1.20/index.global.min.js"
-
-# Plain string — no f-string so JavaScript braces need no escaping.
-# Placeholders: __CDN__  __DATE__  __EVENTS__
+# Placeholders: __CDN__ __CSS__ __TITLE__ __DATE__ __EVENTS__
 CALENDAR_TEMPLATE = """\
 <!DOCTYPE html>
 <html lang="de">
@@ -88,24 +169,14 @@ CALENDAR_TEMPLATE = """\
   <meta charset="UTF-8">
   <script src="__CDN__"></script>
   <style>
-    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
-    html, body              { width: 100%; height: 100%; background: #fff; }
-    #cal                    { padding: 3mm 8mm; height: 100vh; }
-
-    .fc-toolbar-title             { color: #c8102e; font-size: 15pt; }
-    .fc-toolbar.fc-header-toolbar { margin-bottom: 2px !important; }
-    .fc-col-header-cell-cushion   { font-weight: bold; font-size: 10pt; }
-    .fc-daygrid-day-number        { font-size: 9pt; }
-    .fc-day-today                 { background: transparent !important; }
-    .fc-daygrid-event             { background: #00486a; border-color: #00486a;
-                                    white-space: normal !important; }
-    .fc-event-title               { font-size: 8pt; white-space: normal !important; }
-    .fc-daygrid-day-events        { overflow: hidden; }
-    .ev-time                      { font-weight: bold; }
+__CSS__
   </style>
 </head>
 <body>
-  <div id="cal"></div>
+  <div id="page">
+    <h1 id="cal-title">__TITLE__</h1>
+    <div id="cal"></div>
+  </div>
   <script>
     document.addEventListener('DOMContentLoaded', () => {
       const cal = new FullCalendar.Calendar(document.getElementById('cal'), {
@@ -120,7 +191,7 @@ CALENDAR_TEMPLATE = """\
         dayMaxEvents:        false,
         eventDisplay:        'block',
         showNonCurrentDates: false,
-        headerToolbar:       { left: '', center: 'title', right: '' },
+        headerToolbar:       false,
         dayHeaderFormat:     { weekday: 'long' },
         eventContent: function(arg) {
           const m = arg.event.title.match(/^([0-9]{2}:[0-9]{2}) ([^]*)/);
@@ -160,34 +231,55 @@ CALENDAR_TEMPLATE = """\
 </html>"""
 
 
-def calendar_html(events_json: str, initial_date: str) -> str:
+def build_css(fonts: dict, show_title: bool) -> str:
+    title_extra = "display: none;" if not show_title else ""
+    return f"""\
+    *, *::before, *::after {{ box-sizing: border-box; margin: 0; padding: 0; }}
+    html, body              {{ width: 100%; height: 100%; background: #fff; }}
+    #page                   {{ display: flex; flex-direction: column;
+                              height: 100vh; padding: 3mm 8mm; gap: 1mm; }}
+    #cal-title              {{ text-align: center; color: #c8102e;
+                              font-size: {fonts['title']}pt; {title_extra} }}
+    #cal                    {{ flex: 1 1 auto; min-height: 0; }}
+    .fc-col-header-cell-cushion   {{ font-weight: bold; font-size: {fonts['header']}pt; }}
+    .fc-daygrid-day-number        {{ font-size: {fonts['day']}pt; }}
+    .fc-day-today                 {{ background: transparent !important; }}
+    .fc-daygrid-event             {{ background: #00486a; border-color: #00486a;
+                                    white-space: normal !important; }}
+    .fc-event-title               {{ font-size: {fonts['event']}pt;
+                                    white-space: normal !important; }}
+    .fc-daygrid-day-events        {{ overflow: hidden; }}
+    .ev-time                      {{ font-weight: bold; }}"""
+
+
+def calendar_html(cfg: dict, events_json: str, month: str) -> str:
     return (
         CALENDAR_TEMPLATE
         .replace("__CDN__",    FULLCALENDAR_CDN)
-        .replace("__DATE__",   initial_date)
+        .replace("__CSS__",    build_css(cfg["fonts"], cfg["show_title"]))
+        .replace("__TITLE__",  format_title(month, cfg["title"]))
+        .replace("__DATE__",   f"{month}-01")
         .replace("__EVENTS__", events_json)
     )
 
 
 # ── PDF rendering ─────────────────────────────────────────────────────────────
 
-# A3 landscape at 96 dpi
-A3_W_PX = 1587
-A3_H_PX = 1123
+def render_month(pw_page, cfg: dict, events_json: str, month: str) -> bytes:
+    paper = cfg["paper"]
+    w, h  = paper["w"], paper["h"]
+    html  = calendar_html(cfg, events_json, month)
 
-
-def render_month(pw_page, events_json: str, month: str) -> bytes:
-    html = calendar_html(events_json, f"{month}-01")
-
-    # Pass 1: render at A3 dimensions
-    pw_page.set_viewport_size({"width": A3_W_PX, "height": A3_H_PX})
+    # Pass 1: render at paper dimensions
+    pw_page.set_viewport_size({"width": w, "height": h})
     pw_page.set_content(html, wait_until="networkidle")
     pw_page.wait_for_timeout(500)
 
-    rendered_h = pw_page.evaluate("""(() => {
+    # Measure how much height the calendar content actually needs vs what's available
+    rendered_h, cal_h = pw_page.evaluate("""(() => {
         const cal  = document.getElementById('cal');
         const rows = [...cal.querySelectorAll('.fc-daygrid-body tr')];
-        if (!rows.length) return cal.clientHeight;
+        if (!rows.length) return [cal.clientHeight, cal.clientHeight];
         let neededBodyH = 0;
         for (const row of rows) {
             const cells = [...row.querySelectorAll('td')];
@@ -195,22 +287,22 @@ def render_month(pw_page, events_json: str, month: str) -> bytes:
         }
         const body    = cal.querySelector('.fc-daygrid-body');
         const nonBody = cal.clientHeight - (body ? body.clientHeight : 0);
-        return Math.round(nonBody + neededBodyH);
+        return [Math.round(nonBody + neededBodyH), cal.clientHeight];
     })()""")
 
     pdf_opts = dict(
-        format="A3", landscape=True, print_background=True,
+        format=cfg["paper_name"], landscape=True, print_background=True,
         margin={"top": "0", "bottom": "0", "left": "0", "right": "0"},
     )
 
-    if rendered_h <= A3_H_PX:
+    if rendered_h <= cal_h:
         return pw_page.pdf(**pdf_opts)
 
     # Pass 2: widen viewport so scaled-down content still fills the full width
-    scale = A3_H_PX / rendered_h
-    wider_w = math.ceil(A3_W_PX / scale)
-    final_scale = A3_W_PX / wider_w
-    pw_page.set_viewport_size({"width": wider_w, "height": A3_H_PX})
+    scale       = cal_h / rendered_h
+    wider_w     = math.ceil(w / scale)
+    final_scale = w / wider_w
+    pw_page.set_viewport_size({"width": wider_w, "height": h})
     pw_page.set_content(html, wait_until="networkidle")
     pw_page.wait_for_timeout(500)
     return pw_page.pdf(scale=final_scale, **pdf_opts)
@@ -219,27 +311,28 @@ def render_month(pw_page, events_json: str, month: str) -> bytes:
 # ── Main ──────────────────────────────────────────────────────────────────────
 
 def main():
-    events = scrape_all_events()
-    months = active_months(events)
-    print(f"✓ {len(events)} events across {len(months)} months: {', '.join(months)}")
+    cfg    = build_config(parse_args())
+    months = months_in_range(cfg["start"], cfg["end"])
 
+    events = scrape_events(cfg)
     events_json = json.dumps(
         [{"title": e["title"], "start": e["start"]} for e in events],
         ensure_ascii=False,
     )
 
-    print("→ Rendering…")
-    os.makedirs(OUT_DIR, exist_ok=True)
+    print(f"→ Rendering {len(months)} month(s): {', '.join(months)}")
+    os.makedirs(cfg["out_dir"], exist_ok=True)
     with sync_playwright() as pw:
+        paper   = cfg["paper"]
         browser = pw.chromium.launch()
-        page = browser.new_page(viewport={"width": A3_W_PX, "height": A3_H_PX})
+        page    = browser.new_page(viewport={"width": paper["w"], "height": paper["h"]})
         for month in months:
             filename = f"{month} Kalender.pdf"
-            with open(os.path.join(OUT_DIR, filename), "wb") as f:
-                f.write(render_month(page, events_json, month))
+            with open(os.path.join(cfg["out_dir"], filename), "wb") as f:
+                f.write(render_month(page, cfg, events_json, month))
             print(f"  ✓ {filename}")
         browser.close()
-    print(f"✓ Saved → {OUT_DIR}/")
+    print(f"✓ Saved → {cfg['out_dir']}/")
 
 
 if __name__ == "__main__":
