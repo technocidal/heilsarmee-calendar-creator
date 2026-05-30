@@ -4,7 +4,7 @@
 build = "docker build -t heilsarmee-calendar ."
 
 # Build and run the calendar generator
-generate = { depends = ["build"], run = [
+all = { depends = ["build"], run = [
   "mkdir -p output",
   "docker run --rm -v \"$(PWD)/output:/output\" heilsarmee-calendar",
   "open output/"
