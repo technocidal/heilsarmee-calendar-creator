@@ -7,6 +7,6 @@ RUN pip install --no-cache-dir -r requirements.txt
 
 COPY generate_pdf.py .
 
-ENV OUT_FILE=/output/termine-heilsarmee-leipzig.pdf
+ENV OUT_DIR=/output
 
 ENTRYPOINT ["python3", "generate_pdf.py"]
