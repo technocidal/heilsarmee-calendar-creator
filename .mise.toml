@@ -9,3 +9,6 @@ run = { depends = ["build"], run = [
   "docker run --rm -v \"$(PWD)/output:/output\" heilsarmee-calendar",
   "open output/"
 ] }
+
+# Alias for running the generator (default task)
+default = "run"
