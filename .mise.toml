@@ -3,12 +3,9 @@
 # Build the Docker image
 build = "docker build -t heilsarmee-calendar ."
 
-# Build and run the calendar generator
+# Build and run the calendar generator (default)
 run = { depends = ["build"], run = [
   "mkdir -p output",
   "docker run --rm -v \"$(PWD)/output:/output\" heilsarmee-calendar",
   "open output/"
 ] }
-
-# Alias for running the generator (default task)
-default = "run"
