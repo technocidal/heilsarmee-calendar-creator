@@ -1,28 +1,24 @@
 #!/usr/bin/env python3
 """
-generate_pdf.py
 Scrapes all upcoming events from the public Heilsarmee Leipzig calendar
-and renders a print-ready landscape A4 PDF using FullCalendar — one page per month.
+and renders a print-ready A3 landscape PDF per month using FullCalendar.
 
 Run:  python3 generate_pdf.py
-Out:  termine-heilsarmee-leipzig.pdf
+Out:  output/<YYYY-MM> Kalender.pdf
 """
 
-import io
 import json
 import math
 import os
 import re
-from datetime import datetime
 
 import requests
 from bs4 import BeautifulSoup
 from playwright.sync_api import sync_playwright
-from pypdf import PdfReader, PdfWriter
 
-BASE_URL  = "https://www.heilsarmee.de"
+BASE_URL = "https://www.heilsarmee.de"
 LIST_PATH = "/leipzig/termineveranstaltungen.html"
-OUT_FILE  = os.environ.get("OUT_FILE", "output")
+OUT_DIR = os.environ.get("OUT_DIR", "output")
 
 # ── Scraping ──────────────────────────────────────────────────────────────────
 
@@ -34,6 +30,7 @@ def fetch_page(page_num: int) -> BeautifulSoup:
     r.raise_for_status()
     return BeautifulSoup(r.text, "html.parser")
 
+
 def total_pages(soup: BeautifulSoup) -> int:
     nums = [
         int(a.text.strip())
@@ -42,31 +39,30 @@ def total_pages(soup: BeautifulSoup) -> int:
     ]
     return max(nums) if nums else 1
 
+
 def parse_events(soup: BeautifulSoup) -> list[dict]:
     events = []
     for row in soup.select(".listing-row--event"):
         time_el = row.select_one("time")
         if not time_el:
             continue
-        dt        = time_el.get("datetime", "")
-        time_text = time_el.get_text(strip=True)  # e.g. "22.05.2026 10:00–13:00"
-        title     = (row.select_one(".listing-row__headline") or row).get_text(strip=True)
-
-        # Extract start time e.g. "10:00" from "22.05.2026 10:00–13:00"
-        m = re.search(r'(\d{2}:\d{2})', time_text)
+        dt = time_el.get("datetime", "")
+        time_text = time_el.get_text(strip=True)
+        title = (row.select_one(".listing-row__headline") or row).get_text(strip=True)
+        m = re.search(r"(\d{2}:\d{2})", time_text)
         time_part = m.group(1) if m else ""
-
         events.append({
             "start": dt,
             "title": f"{time_part} {title}" if time_part else title,
-            "month": dt[:7],  # "YYYY-MM"
+            "month": dt[:7],
         })
     return events
 
+
 def scrape_all_events() -> list[dict]:
     print("→ Scraping events…")
-    first      = fetch_page(1)
-    pages      = total_pages(first)
+    first = fetch_page(1)
+    pages = total_pages(first)
     all_events = parse_events(first)
     for p in range(2, pages + 1):
         all_events.extend(parse_events(fetch_page(p)))
@@ -74,8 +70,10 @@ def scrape_all_events() -> list[dict]:
     print()
     return all_events
 
+
 def active_months(events: list[dict]) -> list[str]:
     return sorted({e["month"] for e in events})
+
 
 # ── FullCalendar HTML template ────────────────────────────────────────────────
 
@@ -91,20 +89,19 @@ CALENDAR_TEMPLATE = """\
   <script src="__CDN__"></script>
   <style>
     *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
-    html, body { width: 100%; height: 100%; background: #fff; }
-    #cal { padding: 3mm 8mm 3mm; height: 100vh; }
+    html, body              { width: 100%; height: 100%; background: #fff; }
+    #cal                    { padding: 3mm 8mm; height: 100vh; }
 
-    .fc-toolbar-title           { color: #c8102e; font-size: 15pt; }
+    .fc-toolbar-title             { color: #c8102e; font-size: 15pt; }
     .fc-toolbar.fc-header-toolbar { margin-bottom: 2px !important; }
-    .fc-daygrid-event           { background: #00486a; border-color: #00486a;
-                                  white-space: normal !important; }
-    .fc-event-title             { font-size: 8pt; white-space: normal !important; }
-    .fc-day-today               { background: transparent !important; }
-    .fc-col-header-cell-cushion { font-weight: bold; font-size: 10pt; }
-    .fc-daygrid-day-number      { font-size: 9pt; }
-    .ev-time                    { font-weight: bold; }
-    .ev-content                 { display: block; }
-    .fc-daygrid-day-events      { overflow: hidden; }
+    .fc-col-header-cell-cushion   { font-weight: bold; font-size: 10pt; }
+    .fc-daygrid-day-number        { font-size: 9pt; }
+    .fc-day-today                 { background: transparent !important; }
+    .fc-daygrid-event             { background: #00486a; border-color: #00486a;
+                                    white-space: normal !important; }
+    .fc-event-title               { font-size: 8pt; white-space: normal !important; }
+    .fc-daygrid-day-events        { overflow: hidden; }
+    .ev-time                      { font-weight: bold; }
   </style>
 </head>
 <body>
@@ -128,7 +125,6 @@ CALENDAR_TEMPLATE = """\
         eventContent: function(arg) {
           const m = arg.event.title.match(/^([0-9]{2}:[0-9]{2}) ([^]*)/);
           const div = document.createElement('div');
-          div.className = 'ev-content';
           if (m) {
             const t = document.createElement('strong');
             t.className = 'ev-time';
@@ -143,8 +139,8 @@ CALENDAR_TEMPLATE = """\
       });
       cal.render();
 
-      // After layout: hide any pill whose bottom edge is clipped by the cell
-      // boundary, so we only ever show complete pills — never partial ones.
+      // Hide any pill whose bottom edge is clipped by the cell boundary,
+      // so we only ever show complete pills — never partial ones.
       setTimeout(() => {
         document.querySelectorAll('.fc-daygrid-day').forEach(day => {
           const eventsEl = day.querySelector('.fc-daygrid-day-events');
@@ -163,6 +159,7 @@ CALENDAR_TEMPLATE = """\
 </body>
 </html>"""
 
+
 def calendar_html(events_json: str, initial_date: str) -> str:
     return (
         CALENDAR_TEMPLATE
@@ -171,80 +168,79 @@ def calendar_html(events_json: str, initial_date: str) -> str:
         .replace("__EVENTS__", events_json)
     )
 
+
 # ── PDF rendering ─────────────────────────────────────────────────────────────
 
 # A3 landscape at 96 dpi
 A3_W_PX = 1587
 A3_H_PX = 1123
 
+
 def render_month(pw_page, events_json: str, month: str) -> bytes:
     html = calendar_html(events_json, f"{month}-01")
 
-    # Pass 1: render at standard A4 width
+    # Pass 1: render at A3 dimensions
     pw_page.set_viewport_size({"width": A3_W_PX, "height": A3_H_PX})
     pw_page.set_content(html, wait_until="networkidle")
     pw_page.wait_for_timeout(500)
-    rendered_h = pw_page.evaluate("""
-        (() => {
-          const cal  = document.getElementById('cal');
-          const rows = [...cal.querySelectorAll('.fc-daygrid-body tr')];
-          if (!rows.length) return cal.clientHeight;
-          // Sum the actual needed height of each row
-          // (scrollHeight of a cell reflects full content even when clipped)
-          let neededBodyH = 0;
-          for (const row of rows) {
+
+    rendered_h = pw_page.evaluate("""(() => {
+        const cal  = document.getElementById('cal');
+        const rows = [...cal.querySelectorAll('.fc-daygrid-body tr')];
+        if (!rows.length) return cal.clientHeight;
+        let neededBodyH = 0;
+        for (const row of rows) {
             const cells = [...row.querySelectorAll('td')];
             if (cells.length) neededBodyH += Math.max(...cells.map(c => c.scrollHeight));
-          }
-          const body    = cal.querySelector('.fc-daygrid-body');
-          const nonBody = cal.clientHeight - (body ? body.clientHeight : 0);
-          return Math.round(nonBody + neededBodyH);
-        })()
-    """)
+        }
+        const body    = cal.querySelector('.fc-daygrid-body');
+        const nonBody = cal.clientHeight - (body ? body.clientHeight : 0);
+        return Math.round(nonBody + neededBodyH);
+    })()""")
+
+    pdf_opts = dict(
+        format="A3", landscape=True, print_background=True,
+        margin={"top": "0", "bottom": "0", "left": "0", "right": "0"},
+    )
 
     if rendered_h <= A3_H_PX:
-        # Fits without scaling — export directly
-        return pw_page.pdf(
-            format="A3", landscape=True, print_background=True,
-            margin={"top": "0", "bottom": "0", "left": "0", "right": "0"},
-        )
+        return pw_page.pdf(**pdf_opts)
 
-    # Pass 2: widen the viewport by 1/scale so scaled content fills full A4 width
-    scale   = A3_H_PX / rendered_h
+    # Pass 2: widen viewport so scaled-down content still fills the full width
+    scale = A3_H_PX / rendered_h
     wider_w = math.ceil(A3_W_PX / scale)
-    # final_scale = A3_W_PX / wider_w ensures width fits exactly;
-    # height also fits because wider columns reduce wrapping (rendered_h2 ≤ rendered_h)
     final_scale = A3_W_PX / wider_w
     pw_page.set_viewport_size({"width": wider_w, "height": A3_H_PX})
     pw_page.set_content(html, wait_until="networkidle")
     pw_page.wait_for_timeout(500)
-    return pw_page.pdf(
-        format="A3", landscape=True, print_background=True, scale=final_scale,
-        margin={"top": "0", "bottom": "0", "left": "0", "right": "0"},
-    )
+    return pw_page.pdf(scale=final_scale, **pdf_opts)
+
 
 # ── Main ──────────────────────────────────────────────────────────────────────
 
 def main():
-    events  = scrape_all_events()
-    months  = active_months(events)
+    events = scrape_all_events()
+    months = active_months(events)
     print(f"✓ {len(events)} events across {len(months)} months: {', '.join(months)}")
 
-    fc_events   = [{"title": e["title"], "start": e["start"]} for e in events]
-    events_json = json.dumps(fc_events, ensure_ascii=False)
-    print("→ Rendering PDF…")
+    events_json = json.dumps(
+        [{"title": e["title"], "start": e["start"]} for e in events],
+        ensure_ascii=False,
+    )
+
+    print("→ Rendering…")
+    os.makedirs(OUT_DIR, exist_ok=True)
     with sync_playwright() as pw:
         browser = pw.chromium.launch()
         page = browser.new_page(viewport={"width": A3_W_PX, "height": A3_H_PX})
-
-        os.makedirs(OUT_FILE, exist_ok=True)
-
-        # Save individual month PDFs
         for month in months:
-            print(f"  {month}…")
             filename = f"{month} Kalender.pdf"
-            with open(os.path.join(OUT_FILE, filename), "wb") as f:
+            with open(os.path.join(OUT_DIR, filename), "wb") as f:
                 f.write(render_month(page, events_json, month))
             print(f"  ✓ {filename}")
+        browser.close()
+    print(f"✓ Saved → {OUT_DIR}/")
+
+
 if __name__ == "__main__":
     main()
