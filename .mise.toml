@@ -1,0 +1,11 @@
+[tasks]
+
+# Build the Docker image
+build = "docker build -t heilsarmee-calendar ."
+
+# Build and run the calendar generator
+run = { depends = ["build"], cmd = [
+  "mkdir -p output",
+  "docker run --rm -v \"$(PWD)/output:/output\" heilsarmee-calendar",
+  "open output/"
+] }
